@@ -1,0 +1,9 @@
+# Repo map output (generated per-repo, not part of the skill)
+.repo-map/
+
+# Python
+__pycache__/
+*.pyc
+
+# Temp files
+/tmp/
