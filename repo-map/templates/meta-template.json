@@ -1,0 +1,25 @@
+{
+  "repo_name": "",
+  "repo_root": "",
+  "last_commit": null,
+  "last_run": "",
+  "sessions_completed": 0,
+  "coverage": {
+    "files_mapped": 0,
+    "files_total": 0,
+    "directories_fully_explored": 0,
+    "directories_total": 0,
+    "estimated_sessions_remaining": null
+  },
+  "index_token_estimate": 0,
+  "detail_files": 0,
+  "detail_total_tokens": 0,
+  "config": {
+    "ignore_patterns": ["node_modules/", "*.min.js", "bin/", "obj/"],
+    "priority_patterns": ["*.vb", "*.cs", "*.aspx", "*.cshtml", "*.tsx"],
+    "max_file_read_tokens": 3000,
+    "budget_green_threshold": 0.60,
+    "budget_yellow_threshold": 0.80,
+    "budget_red_threshold": 0.90
+  }
+}
