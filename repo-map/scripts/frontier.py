@@ -1,52 +1,8 @@
 #!/usr/bin/env python3
 """Exploration frontier scorer for repo-map skill.
 
-Computes priority scores (0-100) for candidate paths to guide the
-exploration order. Higher scores = explore first.
-
-Scoring factors (weights):
-    - Structural centrality  (30%): Entry points, shallow depth, config files
-    - Query relevance        (25%): Matches against recent query history
-    - Freshness              (25%): Recently modified files rank higher
-    - Coverage gap           (20%): Unmapped paths rank higher than mapped ones
-
 Usage:
-    python frontier.py --scan SCAN.json
-    python frontier.py --scan SCAN.json --mapped-paths MAPPED.json
-    python frontier.py --scan SCAN.json --query-history QUERIES.json
-    python frontier.py --scan SCAN.json --git-log GIT_LOG.json
-
-Input files:
-    SCAN.json       — Output from scan.py (required)
-    MAPPED.json     — JSON array of already-mapped relative paths
-    QUERIES.json    — JSON array of query strings from previous sessions
-    GIT_LOG.json    — JSON object { "path": "ISO-timestamp", ... }
-
-Output (JSON to stdout):
-    {
-        "scored_at": "ISO-8601 timestamp",
-        "total_candidates": 50,
-        "frontier": [
-            {
-                "path": "src/main.py",
-                "score": 92,
-                "tier": "high",
-                "factors": {
-                    "centrality": 28,
-                    "relevance": 22,
-                    "freshness": 25,
-                    "coverage_gap": 17
-                }
-            },
-            ...
-        ]
-    }
-
-Tiers:
-    high    (score >= 70)  — Explore immediately
-    medium  (score 40-69)  — Explore if budget allows
-    low     (score 10-39)  — Explore only in deep passes
-    skip    (score < 10)   — Unlikely to add value
+    python frontier.py --scan SCAN.json [--mapped-paths FILE] [--query-history FILE] [--git-log FILE]
 """
 
 from __future__ import annotations
@@ -57,14 +13,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ── Scoring weights ──────────────────────────────────────────────────────────
 
 W_CENTRALITY = 30
 W_RELEVANCE = 25
 W_FRESHNESS = 25
 W_COVERAGE_GAP = 20
-
-# ── Centrality signals ──────────────────────────────────────────────────────
 
 # Entry point files get high centrality
 ENTRY_POINT_NAMES = {
@@ -92,7 +45,7 @@ HIGH_VALUE_DIRS = {"src", "lib", "app", "core", "api", "pkg", "cmd", "internal"}
 
 
 def score_centrality(path: str, entry_points: list[str], config_files: list[str]) -> int:
-    """Score 0-100 based on structural importance."""
+    """Score 0-100 for structural importance."""
     fname = os.path.basename(path)
     parts = Path(path).parts
     depth = len(parts) - 1  # depth 0 = root level
@@ -125,7 +78,7 @@ def score_centrality(path: str, entry_points: list[str], config_files: list[str]
 
 
 def score_relevance(path: str, query_history: list[str]) -> int:
-    """Score 0-100 based on match against recent queries."""
+    """Score 0-100 for query history match."""
     if not query_history:
         return 50  # neutral when no history
 
@@ -152,7 +105,7 @@ def score_relevance(path: str, query_history: list[str]) -> int:
 
 
 def score_freshness(path: str, git_log: dict[str, str] | None) -> int:
-    """Score 0-100 based on recency of modifications."""
+    """Score 0-100 for modification recency."""
     if not git_log:
         return 50  # neutral when no git data
 
@@ -182,7 +135,7 @@ def score_freshness(path: str, git_log: dict[str, str] | None) -> int:
 
 
 def score_coverage_gap(path: str, mapped_paths: set[str]) -> int:
-    """Score 0-100 based on whether the path is already mapped."""
+    """Score 0-100 for coverage gap (unmapped = higher)."""
     if path in mapped_paths:
         return 0  # already mapped, no gap
 
@@ -318,8 +271,8 @@ def main():
         "frontier": scored,
     }
 
-    json.dump(output, sys.stdout, indent=2)
-    print()  # trailing newline
+    json.dump(output, sys.stdout, separators=(",", ":"))
+    print()
 
 
 if __name__ == "__main__":

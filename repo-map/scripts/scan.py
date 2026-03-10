@@ -1,26 +1,8 @@
 #!/usr/bin/env python3
 """Structural scanner for repo-map skill.
 
-Walks a directory tree, respects ignore patterns, detects entry points
-and config files, and outputs structured JSON to stdout.
-
 Usage:
     python scan.py [ROOT_DIR]
-    python scan.py --help
-
-Output (JSON to stdout):
-    {
-        "root": "/absolute/path",
-        "scanned_at": "ISO-8601 timestamp",
-        "total_files": 123,
-        "total_dirs": 45,
-        "files": [ { "path": "relative/path", "size": 1234, "ext": ".py" }, ... ],
-        "dirs": [ { "path": "relative/dir", "file_count": 5, "depth": 2 }, ... ],
-        "entry_points": [ "src/main.py", ... ],
-        "config_files": [ "package.json", ... ],
-        "tech_stack": ["python", "javascript"],
-        "ignore_patterns_used": ["node_modules/", ...]
-    }
 """
 
 from __future__ import annotations
@@ -30,8 +12,6 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-
-# ── Ignore patterns ──────────────────────────────────────────────────────────
 
 # Directories to skip entirely (matched against directory name)
 IGNORE_DIRS = {
@@ -107,8 +87,6 @@ IGNORE_FILES = {
     "go.sum",
 }
 
-# ── Entry point detection ────────────────────────────────────────────────────
-
 # Files that indicate project entry points (exact name match)
 ENTRY_POINT_FILES = {
     "main.py", "app.py", "manage.py", "wsgi.py", "asgi.py",
@@ -144,8 +122,6 @@ CONFIG_FILES = {
     "terraform.tf",
     "SKILL.md",
 }
-
-# ── Tech stack detection ─────────────────────────────────────────────────────
 
 # Map file extensions -> technology name
 EXT_TO_TECH = {
@@ -210,7 +186,7 @@ CONFIG_TO_TECH = {
 
 
 def should_ignore_dir(name: str) -> bool:
-    """Check if a directory name matches ignore patterns."""
+    """Check if directory should be skipped."""
     if name in IGNORE_DIRS:
         return True
     # Handle glob-like patterns (e.g., *.egg-info)
@@ -224,7 +200,7 @@ def should_ignore_dir(name: str) -> bool:
 
 
 def should_ignore_file(name: str, ext: str) -> bool:
-    """Check if a file should be ignored."""
+    """Check if file should be skipped."""
     if name in IGNORE_FILES:
         return True
     if ext in IGNORE_EXTENSIONS:
@@ -236,7 +212,7 @@ def should_ignore_file(name: str, ext: str) -> bool:
 
 
 def scan_repo(root: str) -> dict:
-    """Scan a repository and return structured data."""
+    """Scan repository tree and return structured JSON data."""
     root_path = Path(root).resolve()
     if not root_path.is_dir():
         print(f"Error: {root_path} is not a directory", file=sys.stderr)
@@ -247,7 +223,6 @@ def scan_repo(root: str) -> dict:
     entry_points = []
     config_files = []
     tech_set = set()
-    dir_file_counts: dict[str, int] = {}
 
     for dirpath, dirnames, filenames in os.walk(root_path, topdown=True):
         # Filter directories in-place to prevent os.walk from descending
@@ -309,10 +284,6 @@ def scan_repo(root: str) -> dict:
                 "file_count": file_count,
                 "depth": depth,
             })
-            dir_file_counts[rel_dir] = file_count
-
-    # Also detect entry points in src/ or app/ subdirectories
-    # (already handled by the walk, just noting this is automatic)
 
     return {
         "root": str(root_path),
@@ -335,8 +306,8 @@ def main():
 
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     result = scan_repo(root)
-    json.dump(result, sys.stdout, indent=2)
-    print()  # trailing newline
+    json.dump(result, sys.stdout, separators=(",", ":"))
+    print()
 
 
 if __name__ == "__main__":

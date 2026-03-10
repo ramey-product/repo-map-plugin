@@ -1,26 +1,8 @@
 #!/usr/bin/env python3
-"""T3 deep-dive manager and enrichment orchestrator.
-
-Identifies files that need T3 deep-dive summaries, prioritizes them,
-and manages file state. Does NOT read source files or generate summaries —
-the LLM does the actual summarization based on this script's output.
+"""T3 deep-dive orchestrator for repo-map skill.
 
 Usage:
-    python enrich.py --details-dir .repo-map/details/ --deep-dir .repo-map/deep/ --meta .repo-map/meta.json
-    python enrich.py --file src/auth/jwt.ts --details-dir .repo-map/details/ --deep-dir .repo-map/deep/ --meta .repo-map/meta.json
-    python enrich.py --details-dir .repo-map/details/ --deep-dir .repo-map/deep/ --meta .repo-map/meta.json --batch 5
-    python enrich.py --details-dir .repo-map/details/ --deep-dir .repo-map/deep/ --meta .repo-map/meta.json --report
-
-Output (JSON to stdout):
-    {
-        "mode": "batch|single|report",
-        "files_enriched": [...],
-        "files_skipped": [...],
-        "total_enriched": 0,
-        "total_skipped": 0,
-        "deep_files_total": 0,
-        "deep_total_tokens": 0
-    }
+    python enrich.py --details-dir DIR --deep-dir DIR --meta META.json [--file PATH | --batch N | --report]
 """
 from __future__ import annotations
 
@@ -32,45 +14,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-# ── Token estimation ─────────────────────────────────────────────────────────
-
 def estimate_tokens(text: str) -> int:
-    """Estimate token count: ~4 chars/token for markdown/prose."""
+    """Estimate token count: ~4 chars/token for markdown."""
     return max(1, len(text) // 4)
 
 
-# ── Slug convention (matches compress.py, drift.py, init.py) ─────────────────
-
 def path_to_slug(path: str) -> str:
-    """Convert a file/dir path to a slug.
-
-    src/utils/helper.py → src-utils-helper-py
-    src/utils/ → src-utils
-    """
+    """Convert a file/dir path to a detail file slug."""
     slug = path.replace("/", "-").replace("\\", "-").replace(".", "-")
     slug = re.sub(r'-+', '-', slug)
-    slug = slug.strip("-").lower()
-    return slug
+    return slug.strip("-").lower()
 
 
-def slug_to_path_candidates(slug: str) -> list[str]:
-    """Reverse a slug back to likely source path candidates.
 
-    src-utils-helper-py → src/utils/helper.py (best guess)
-    This is heuristic — slugs are lossy.
-    """
-    # Replace hyphens with / as a starting point, but extensions need dots
-    # We can't perfectly invert, so return the slug for matching purposes
-    return [slug]
-
-
-# ── Scanning ─────────────────────────────────────────────────────────────────
 
 def scan_detail_files(details_dir: str) -> list[dict]:
-    """List all T2 summary files with metadata.
-
-    Returns [{path, slug, size, estimated_tokens, source_path_hint}, ...]
-    """
+    """List all T2 summary files with metadata."""
     details_path = Path(details_dir)
     if not details_path.is_dir():
         return []
@@ -97,10 +56,7 @@ def scan_detail_files(details_dir: str) -> list[dict]:
 
 
 def scan_deep_files(deep_dir: str) -> list[dict]:
-    """List all T3 deep-dive files with metadata.
-
-    Returns [{path, slug, size, estimated_tokens}, ...]
-    """
+    """List all T3 deep-dive files with metadata."""
     deep_path = Path(deep_dir)
     if not deep_path.is_dir():
         return []
@@ -121,10 +77,7 @@ def scan_deep_files(deep_dir: str) -> list[dict]:
 
 
 def _extract_source_path(detail_content: str, slug: str) -> str:
-    """Extract the source file path from a T2 detail file.
-
-    Looks for '# path/to/file' header pattern or falls back to slug.
-    """
+    """Extract source file path from T2 detail header, or fall back to slug."""
     for line in detail_content.splitlines()[:5]:
         line = line.strip()
         if line.startswith("# ") and not line.startswith("# Summary"):
@@ -135,13 +88,8 @@ def _extract_source_path(detail_content: str, slug: str) -> str:
     return slug
 
 
-# ── Cross-reference extraction ───────────────────────────────────────────────
-
 def extract_cross_references(detail_content: str) -> list[str]:
-    """Parse a T2 summary to find referenced file paths.
-
-    Look for patterns like imports, relative paths, or explicit references.
-    """
+    """Parse a T2 summary to find referenced file paths."""
     refs: list[str] = []
     # Match patterns: imports from X, imported by Y, relative paths
     path_pattern = re.compile(
@@ -174,12 +122,10 @@ def extract_cross_references(detail_content: str) -> list[str]:
     return unique
 
 
-# ── Prioritization ───────────────────────────────────────────────────────────
-
 def prioritize_by_query_history(
     candidates: list[dict], query_history_path: str
 ) -> list[dict]:
-    """Boost candidates that appear in query history paths_accessed."""
+    """Boost candidates that appear in query history."""
     try:
         with open(query_history_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -216,10 +162,7 @@ def find_enrichment_candidates(
     details_dir: str,
     meta: dict | None = None,
 ) -> list[dict]:
-    """Cross-reference T2 vs T3, prioritize by query frequency + centrality.
-
-    Returns [{source_path, detail_path, slug, priority_score, reason}, ...]
-    """
+    """Cross-reference T2 vs T3, prioritize by query frequency + centrality."""
     deep_slugs = {d["slug"] for d in deep}
     candidates: list[dict] = []
 
@@ -284,22 +227,16 @@ def find_enrichment_candidates(
 
 
 def estimate_deep_tokens(detail_content: str) -> int:
-    """Estimate how many tokens a T3 deep-dive would consume.
+    """Estimate T3 tokens (~2.5x the T2 summary)."""
+    return int(estimate_tokens(detail_content) * 2.5)
 
-    Heuristic: T3 is typically 2-3x the T2 summary length.
-    """
-    t2_tokens = estimate_tokens(detail_content)
-    return int(t2_tokens * 2.5)
-
-
-# ── Report mode ──────────────────────────────────────────────────────────────
 
 def generate_report(
     details: list[dict],
     deep: list[dict],
     candidates: list[dict],
 ) -> dict:
-    """Generate enrichment status report."""
+    """Generate enrichment status report for --report mode."""
     t2_count = len(details)
     t3_count = len(deep)
     coverage = round(t3_count / t2_count * 100, 1) if t2_count > 0 else 0.0
@@ -316,81 +253,40 @@ def generate_report(
     }
 
 
-# ── Single-file mode ────────────────────────────────────────────────────────
 
-def enrich_single(
-    file_path: str,
-    details_dir: str,
-    deep_dir: str,
-) -> dict:
-    """Process a single file for T3 enrichment.
-
-    Returns result dict with status and instructions.
-    """
+def enrich_single(file_path: str, details_dir: str, deep_dir: str) -> dict:
+    """Process a single file for T3 enrichment."""
     slug = path_to_slug(file_path)
     detail_path = Path(details_dir) / f"{slug}.md"
     deep_path = Path(deep_dir) / f"{slug}.md"
 
-    # Check if T3 already exists
+    # Compute deep stats once
+    deep_count = len(list(Path(deep_dir).glob("*.md"))) if Path(deep_dir).is_dir() else 0
+    deep_tokens = _count_deep_tokens(deep_dir)
+
+    base = {"mode": "single", "deep_files_total": deep_count, "deep_total_tokens": deep_tokens}
+
     if deep_path.exists():
-        return {
-            "mode": "single",
-            "files_enriched": [],
-            "files_skipped": [{"source_path": file_path, "reason": "deep_exists"}],
-            "total_enriched": 0,
-            "total_skipped": 1,
-            "deep_files_total": len(list(Path(deep_dir).glob("*.md"))) if Path(deep_dir).is_dir() else 0,
-            "deep_total_tokens": _count_deep_tokens(deep_dir),
-        }
+        return {**base, "files_enriched": [], "files_skipped": [{"source_path": file_path, "reason": "deep_exists"}],
+                "total_enriched": 0, "total_skipped": 1}
 
-    # Check if T2 exists
     if not detail_path.exists():
-        return {
-            "mode": "single",
-            "files_enriched": [],
-            "files_skipped": [{"source_path": file_path, "reason": "needs_t2_first"}],
-            "total_enriched": 0,
-            "total_skipped": 1,
-            "deep_files_total": len(list(Path(deep_dir).glob("*.md"))) if Path(deep_dir).is_dir() else 0,
-            "deep_total_tokens": _count_deep_tokens(deep_dir),
-        }
+        return {**base, "files_enriched": [], "files_skipped": [{"source_path": file_path, "reason": "needs_t2_first"}],
+                "total_enriched": 0, "total_skipped": 1}
 
-    detail_content = detail_path.read_text(encoding="utf-8", errors="replace")
-    estimated = estimate_deep_tokens(detail_content)
-
-    return {
-        "mode": "single",
-        "files_enriched": [{
-            "source_path": file_path,
-            "detail_path": str(detail_path),
-            "deep_path": str(deep_path),
-            "status": "ready",
-            "estimated_tokens": estimated,
-        }],
-        "files_skipped": [],
-        "total_enriched": 1,
-        "total_skipped": 0,
-        "deep_files_total": len(list(Path(deep_dir).glob("*.md"))) if Path(deep_dir).is_dir() else 0,
-        "deep_total_tokens": _count_deep_tokens(deep_dir),
-        "instruction": {
-            "action": "generate_t3",
-            "source_path": file_path,
-            "detail_path": str(detail_path),
-            "deep_path": str(deep_path),
-            "format": "deep-dive",
-            "max_tokens": 2000,
-        },
-    }
+    estimated = estimate_deep_tokens(detail_path.read_text(encoding="utf-8", errors="replace"))
+    return {**base,
+            "files_enriched": [{"source_path": file_path, "detail_path": str(detail_path),
+                                "deep_path": str(deep_path), "status": "ready", "estimated_tokens": estimated}],
+            "files_skipped": [], "total_enriched": 1, "total_skipped": 0,
+            "instruction": {"action": "generate_t3", "source_path": file_path, "detail_path": str(detail_path),
+                            "deep_path": str(deep_path), "format": "deep-dive", "max_tokens": 2000}}
 
 
-# ── Batch mode ───────────────────────────────────────────────────────────────
 
 def enrich_batch(
-    details_dir: str,
-    deep_dir: str,
-    query_history_path: str | None,
-    batch_size: int,
-    meta: dict | None = None,
+    details_dir: str, deep_dir: str, query_history_path: str | None,
+    batch_size: int, meta: dict | None = None,
 ) -> dict:
     """Identify and return top N candidates for T3 enrichment."""
     details = scan_detail_files(details_dir)
@@ -432,10 +328,9 @@ def enrich_batch(
     }
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _count_deep_tokens(deep_dir: str) -> int:
-    """Sum token estimates for all T3 files."""
+    """Sum estimated tokens for all T3 files."""
     deep_path = Path(deep_dir)
     if not deep_path.is_dir():
         return 0
@@ -447,7 +342,7 @@ def _count_deep_tokens(deep_dir: str) -> int:
 
 
 def update_meta(meta_path: str, deep_dir: str) -> None:
-    """Update meta.json with T3 tracking fields."""
+    """Update meta.json T3 tracking fields."""
     try:
         with open(meta_path, "r", encoding="utf-8") as f:
             meta = json.load(f)
@@ -463,7 +358,6 @@ def update_meta(meta_path: str, deep_dir: str) -> None:
         f.write("\n")
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     """Main entry point."""
@@ -476,7 +370,6 @@ def main() -> None:
     details_dir: str | None = None
     deep_dir: str | None = None
     meta_path: str | None = None
-    index_path: str | None = None
     file_path: str | None = None
     batch_size = 5
     report_mode = False
@@ -492,9 +385,6 @@ def main() -> None:
             i += 2
         elif args[i] == "--meta" and i + 1 < len(args):
             meta_path = args[i + 1]
-            i += 2
-        elif args[i] == "--index" and i + 1 < len(args):
-            index_path = args[i + 1]
             i += 2
         elif args[i] == "--file" and i + 1 < len(args):
             file_path = args[i + 1]
@@ -552,7 +442,7 @@ def main() -> None:
     # Update meta.json with current T3 counts
     update_meta(meta_path, deep_dir)
 
-    json.dump(result, sys.stdout, indent=2)
+    json.dump(result, sys.stdout, separators=(",", ":"))
     print()
 
 

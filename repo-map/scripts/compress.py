@@ -1,30 +1,8 @@
 #!/usr/bin/env python3
 """Compress repo-map index.md when it exceeds a token threshold.
 
-Applies three compression strategies in order:
-1. Hierarchical Collapse — collapse fully-mapped directories to single lines
-2. Depth Limiting — collapse deep directories (depth > 3) unless hot-path
-3. Sibling Merging — merge 10+ same-extension files in a directory
-
 Usage:
-    python compress.py --index .repo-map/index.md
-    python compress.py --index .repo-map/index.md --threshold 20000
-    python compress.py --index .repo-map/index.md --details-dir .repo-map/details/
-    python compress.py --index .repo-map/index.md --query-history .repo-map/queries.json
-    python compress.py --index .repo-map/index.md --dry-run
-
-Output (JSON to stdout):
-    {
-        "original_tokens": 32500,
-        "compressed_tokens": 18200,
-        "reduction_pct": 44.0,
-        "threshold": 20000,
-        "under_threshold": true,
-        "strategies_applied": ["hierarchical_collapse", "depth_limiting", "sibling_merging"],
-        "collapsed_dirs": [...],
-        "preserved_hot_paths": ["src/api/", "src/auth/"],
-        "compressed_index_path": ".repo-map/index.md"
-    }
+    python compress.py --index INDEX.md [--threshold N] [--details-dir DIR] [--query-history FILE] [--dry-run]
 """
 from __future__ import annotations
 
@@ -36,18 +14,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-# ── Token estimation ─────────────────────────────────────────────────────────
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count: ~4 chars/token for markdown/prose."""
+    """Estimate token count: ~4 chars/token for markdown."""
     return max(1, len(text) // 4)
 
 
-# ── Tree node ────────────────────────────────────────────────────────────────
 
 @dataclass
 class TreeNode:
-    """Represents a file or directory in the structure tree."""
+    """A file or directory node in the structure tree."""
     path: str
     depth: int
     is_dir: bool
@@ -65,12 +41,6 @@ class TreeNode:
         return Path(self.path).suffix
 
 
-# ── Parsing ──────────────────────────────────────────────────────────────────
-
-# Patterns for tree lines
-# File: "  src/auth/jwt.ts — JWT token creation"  or  "    - jwt.ts — JWT token creation"
-# Dir:  "  src/auth/"  or  "  src/ [5 files], 3 subdirs  (unmapped)"
-# Collapsed: "  src/utils/ [5 utility modules, see details/src-utils.md]"
 _LINE_INDENT_RE = re.compile(r'^(\s*)')
 _DIR_LINE_RE = re.compile(r'^(\s*)(?:-\s+)?(\S+/)\s*(.*)')
 _FILE_LINE_RE = re.compile(r'^(\s*)(?:-\s+)?(\S+)\s*(.*)')
@@ -79,7 +49,7 @@ _UNMAPPED_RE = re.compile(r'\(unmapped\)')
 
 
 def _measure_indent(line: str) -> int:
-    """Count leading spaces as indent level (2 spaces = 1 level)."""
+    """Count leading spaces as indent level (2 spaces = 1)."""
     m = _LINE_INDENT_RE.match(line)
     if not m:
         return 0
@@ -88,10 +58,7 @@ def _measure_indent(line: str) -> int:
 
 
 def _parse_description(rest: str) -> tuple[str, bool, bool]:
-    """Parse the rest of a line after the path.
-
-    Returns (description, is_mapped, is_collapsed).
-    """
+    """Parse rest of line after path. Returns (description, is_mapped, is_collapsed)."""
     rest = rest.strip()
     if _COLLAPSED_RE.search(rest):
         return rest, True, True
@@ -104,10 +71,7 @@ def _parse_description(rest: str) -> tuple[str, bool, bool]:
 
 
 def parse_structure_tree(structure_text: str) -> list[TreeNode]:
-    """Parse the ## Structure section into a flat list of TreeNodes.
-
-    Returns a flat list; parent-child relationships are inferred by indent.
-    """
+    """Parse ## Structure into flat list of TreeNodes."""
     nodes: list[TreeNode] = []
     for line in structure_text.splitlines():
         stripped = line.strip()
@@ -156,14 +120,8 @@ def parse_structure_tree(structure_text: str) -> list[TreeNode]:
 
 
 def build_dir_tree(nodes: list[TreeNode]) -> dict[str, list[TreeNode]]:
-    """Group nodes by their parent directory based on indent levels.
-
-    Returns {dir_path: [child_nodes]}.
-    Uses indent-based parent tracking: a node's parent is the most recent
-    directory at indent level = node.indent - 1.
-    """
+    """Group nodes by parent directory based on indent levels."""
     dir_children: dict[str, list[TreeNode]] = {}
-    # Stack of (indent, dir_path) for tracking parent context
     dir_stack: list[tuple[int, str]] = []
 
     for node in nodes:
@@ -183,7 +141,6 @@ def build_dir_tree(nodes: list[TreeNode]) -> dict[str, list[TreeNode]]:
     return dir_children
 
 
-# ── Hot paths ────────────────────────────────────────────────────────────────
 
 def load_hot_paths(query_history_path: str) -> set[str]:
     """Extract directory prefixes from query history as hot paths."""
@@ -204,56 +161,39 @@ def load_hot_paths(query_history_path: str) -> set[str]:
     return hot
 
 
-# ── Detail file helpers ──────────────────────────────────────────────────────
 
 def path_to_slug(path: str) -> str:
-    """Convert a file/dir path to a detail file slug.
-
-    src/utils/helper.py → src-utils-helper-py
-    src/utils/ → src-utils
-    """
+    """Convert a file/dir path to a detail file slug."""
     slug = path.replace("/", "-").replace("\\", "-").replace(".", "-")
     slug = re.sub(r'-+', '-', slug)
-    slug = slug.strip("-").lower()
-    return slug
+    return slug.strip("-").lower()
 
 
 def check_all_mapped(children: list[TreeNode], details_dir: str | None) -> bool:
-    """Check if ALL file children of a directory have detail files."""
+    """Check if ALL file children have detail files."""
     if not details_dir:
         return False
-
     file_children = [c for c in children if not c.is_dir]
     if not file_children:
         return False
-
     details_path = Path(details_dir)
+    if not details_path.is_dir():
+        return False
+    detail_names = {f.name for f in details_path.iterdir() if f.is_file()}
     for child in file_children:
         if not child.is_mapped:
             return False
-        # Check if detail file exists
         slug = path_to_slug(child.path)
-        if not (details_path / f"{slug}.md").exists():
-            # Also try with parent dir prefix
-            # The child.path might be relative (just filename) while detail
-            # files use full paths from repo root. Try matching by filename.
-            found = False
-            for f in details_path.iterdir():
-                if f.name.endswith(f"{slug}.md"):
-                    found = True
-                    break
-            if not found:
-                return False
+        expected = f"{slug}.md"
+        if expected not in detail_names and not any(n.endswith(expected) for n in detail_names):
+            return False
     return True
 
 
 def create_rollup_detail(
     dir_path: str, children: list[TreeNode], details_dir: str
 ) -> str:
-    """Create a roll-up detail file for a collapsed directory.
-
-    Returns the path to the created file (relative to .repo-map/).
-    """
+    """Create roll-up detail file for a collapsed directory."""
     slug = path_to_slug(dir_path)
     detail_filename = f"{slug}.md"
     detail_path = Path(details_dir) / detail_filename
@@ -271,22 +211,12 @@ def create_rollup_detail(
     return f"details/{detail_filename}"
 
 
-# ── Compression strategies ───────────────────────────────────────────────────
 
 def apply_hierarchical_collapse(
-    nodes: list[TreeNode],
-    details_dir: str | None,
-    hot_paths: set[str],
-    dry_run: bool,
+    nodes: list[TreeNode], details_dir: str | None,
+    hot_paths: set[str], dry_run: bool,
 ) -> tuple[list[TreeNode], list[dict]]:
-    """Strategy 1: Collapse fully-mapped directories.
-
-    Only collapse if:
-    - ALL file children have detail files
-    - Directory has >= 3 file children
-    - Directory is NOT in hot paths
-    - Directory is not already collapsed
-    """
+    """Strategy 1: Collapse fully-mapped directories with >= 3 files."""
     dir_children = build_dir_tree(nodes)
     collapsed_dirs: list[dict] = []
     collapse_set: set[str] = set()  # dir paths to collapse
@@ -355,14 +285,9 @@ def apply_hierarchical_collapse(
 
 
 def apply_depth_limiting(
-    nodes: list[TreeNode],
-    hot_paths: set[str],
-    max_depth: int = 3,
+    nodes: list[TreeNode], hot_paths: set[str], max_depth: int = 3,
 ) -> list[TreeNode]:
-    """Strategy 2: Collapse directories deeper than max_depth.
-
-    Preserves hot-path directories at full depth.
-    """
+    """Strategy 2: Collapse directories deeper than max_depth (preserves hot paths)."""
     result: list[TreeNode] = []
     collapsed_at_depth: dict[str, bool] = {}  # track which dirs we collapse
 
@@ -414,16 +339,10 @@ def apply_depth_limiting(
 
 
 def apply_sibling_merging(
-    nodes: list[TreeNode],
-    details_dir: str | None,
-    hot_paths: set[str],
-    dry_run: bool,
-    min_siblings: int = 10,
+    nodes: list[TreeNode], details_dir: str | None,
+    hot_paths: set[str], dry_run: bool, min_siblings: int = 10,
 ) -> tuple[list[TreeNode], list[dict]]:
-    """Strategy 3: Merge 10+ same-extension files in a directory.
-
-    Groups files by extension and collapses them into a single summary line.
-    """
+    """Strategy 3: Merge 10+ same-extension files into summary lines."""
     dir_children = build_dir_tree(nodes)
     merge_dirs: list[dict] = []
     merge_set: dict[str, dict[str, list[TreeNode]]] = {}  # dir -> {ext -> [nodes]}
@@ -547,13 +466,9 @@ def _ext_to_language(ext: str) -> str:
     return mapping.get(ext, ext.lstrip(".").upper() if ext else "misc")
 
 
-# ── Index rebuild ────────────────────────────────────────────────────────────
 
 def extract_structure_section(content: str) -> tuple[str, str, str]:
-    """Split index.md into (before_structure, structure_text, after_structure).
-
-    The structure section starts with "## Structure" and ends at the next "##" heading.
-    """
+    """Split index.md into (before_structure, structure_text, after_structure)."""
     lines = content.split("\n")
     start_idx = None
     end_idx = None
@@ -607,7 +522,6 @@ def rebuild_index(original_content: str, compressed_nodes: list[TreeNode]) -> st
     return result
 
 
-# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     """Main entry point."""
@@ -670,7 +584,7 @@ def main() -> None:
             "preserved_hot_paths": [],
             "compressed_index_path": index_path,
         }
-        json.dump(result, sys.stdout, indent=2)
+        json.dump(result, sys.stdout, separators=(",", ":"))
         print()
         sys.exit(0)
 
@@ -730,7 +644,7 @@ def main() -> None:
         "compressed_index_path": index_path,
     }
 
-    json.dump(result, sys.stdout, indent=2)
+    json.dump(result, sys.stdout, separators=(",", ":"))
     print()
 
 
