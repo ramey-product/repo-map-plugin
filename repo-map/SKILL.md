@@ -72,14 +72,18 @@ Slug convention for detail files: replace `/`, `.`, and `\` with `-`, collapse m
 ## 4. Warm Start (subsequent explore)
 
 1. Load `.repo-map/index.md`, `frontier.md`, `meta.json`
-2. Run drift detection for staleness:
+2. Check if index needs compression (token estimate > 20K):
+   ```bash
+   python3 repo-map/scripts/compress.py --index .repo-map/index.md --details-dir .repo-map/details/ --query-history .repo-map/queries.json
+   ```
+3. Run drift detection for staleness:
    ```bash
    python3 repo-map/scripts/drift.py --meta .repo-map/meta.json --root "$REPO_ROOT" > /tmp/drift.json
    ```
    Process any REMOVE/REMAP/ADD actions before exploring (same steps as Update Mode §3)
-3. Pop highest-priority entries from `frontier.md`
-4. For each entry: read file → generate T2 summary → write to `details/` → update `index.md` → add new refs to frontier → check budget
-5. Continue until budget hits Red threshold
+4. Pop highest-priority entries from `frontier.md`
+5. For each entry: read file → generate T2 summary → write to `details/` → update `index.md` → add new refs to frontier → check budget
+6. Continue until budget hits Red threshold
 
 ## 5. Handoff Protocol
 
@@ -89,7 +93,12 @@ When budget reaches Red (>= 80% consumed), **stop exploring immediately** and se
 2. Regenerate `frontier.md` — reprioritize remaining entries, add new discoveries
 3. Update `meta.json`: increment `sessions_completed`, set `last_commit` to current HEAD, update `last_run`, recalculate `coverage`
 4. Update `index.md` with all new structural entries from this session
-5. Report to user:
+5. If index.md token estimate > 20K, run compression:
+   ```bash
+   python3 repo-map/scripts/compress.py --index .repo-map/index.md --details-dir .repo-map/details/ --query-history .repo-map/queries.json
+   ```
+   Update `meta.json`: set `index_compressed` to true, `compression_level` to number of strategies applied.
+6. Report to user:
    > Session N complete. Mapped X new files (Y/Z total, P%).
    > Next session priorities: [top 3 frontier entries].
    > Estimated N sessions remaining for 80% coverage.
@@ -103,6 +112,11 @@ When `.repo-map/index.md` exists and no explore/update command was given:
 3. For deeper questions, load the relevant `details/*.md` file (~200-800 tokens each)
 4. Only fall through to raw source reads (T4) when T2 detail is insufficient
 5. **Every T4 raw read MUST produce a T2 summary as a side effect** — write it to `details/` and update `index.md`. No read should be wasted.
+6. **Track queries**: Append each query to `.repo-map/queries.json` for hot-path preservation during compression:
+   ```json
+   {"query": "user's question", "paths_accessed": ["files/read.py"], "timestamp": "ISO-8601"}
+   ```
+   Create the file if it doesn't exist with `{"queries": []}` as the initial content.
 
 ## 7. Summary Guidelines
 

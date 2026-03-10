@@ -21,5 +21,8 @@
     "budget_green_threshold": 0.60,
     "budget_yellow_threshold": 0.80,
     "budget_red_threshold": 0.90
-  }
+  },
+  "query_history_file": "queries.json",
+  "index_compressed": false,
+  "compression_level": 0
 }
