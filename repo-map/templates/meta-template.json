@@ -23,6 +23,8 @@
     "budget_red_threshold": 0.90
   },
   "query_history_file": "queries.json",
+  "deep_files": 0,
+  "deep_total_tokens": 0,
   "index_compressed": false,
   "compression_level": 0
 }
