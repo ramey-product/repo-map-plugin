@@ -84,6 +84,11 @@ Slug convention for detail files: replace `/`, `.`, and `\` with `-`, collapse m
 4. Pop highest-priority entries from `frontier.md`
 5. For each entry: read file → generate T2 summary → write to `details/` → update `index.md` → add new refs to frontier → check budget
 6. Continue until budget hits Red threshold
+7. If budget is in Green zone and high-centrality files lack T3:
+   ```bash
+   python3 repo-map/scripts/enrich.py --details-dir .repo-map/details/ --deep-dir .repo-map/deep/ --meta .repo-map/meta.json --batch 3
+   ```
+   Process the top 3 candidates: read source → generate T3 → write to `deep/`
 
 ## 5. Handoff Protocol
 
@@ -110,13 +115,19 @@ When `.repo-map/index.md` exists and no explore/update command was given:
 1. Load `index.md` (~10-25K tokens) — this is the structural map
 2. Answer structural questions directly from the index ("where is X?", "what modules exist?")
 3. For deeper questions, load the relevant `details/*.md` file (~200-800 tokens each)
-4. Only fall through to raw source reads (T4) when T2 detail is insufficient
+3a. If T2 is insufficient, check for `deep/*.md` file (~500-2000 tokens) before falling back to source
+4. Only fall through to raw source reads (T4) when T2 and T3 detail are both insufficient
 5. **Every T4 raw read MUST produce a T2 summary as a side effect** — write it to `details/` and update `index.md`. No read should be wasted.
 6. **Track queries**: Append each query to `.repo-map/queries.json` for hot-path preservation during compression:
    ```json
    {"query": "user's question", "paths_accessed": ["files/read.py"], "timestamp": "ISO-8601"}
    ```
    Create the file if it doesn't exist with `{"queries": []}` as the initial content.
+7. **Opportunistic enrichment**: If a T4 raw read was performed and budget allows:
+   a. Generate T3 deep-dive content (function index, logic flow, patterns)
+   b. Write to `.repo-map/deep/{path-slug}.md`
+   c. Update meta.json: increment deep_files count
+   Run: `python3 repo-map/scripts/enrich.py --file {path} --details-dir .repo-map/details/ --deep-dir .repo-map/deep/ --meta .repo-map/meta.json`
 
 ## 7. Summary Guidelines
 
@@ -130,3 +141,14 @@ Constraints:
 - Never include secrets, API keys, credentials, or sensitive data
 - Use relative paths for cross-references
 - Prefer specifics ("handles JWT auth for /api/users") over vague descriptions ("utility module")
+
+T3 deep-dives follow this format:
+- **Function/Class Index**: Every exported function with signature and 1-line description
+- **Logic Flow**: Prose description of the main execution path
+- **Notable Patterns**: Design patterns, error handling approach, thread-safety
+- **Internal Dependencies**: What this file calls and what calls it
+
+T3 Constraints:
+- 500-2000 tokens per file
+- Function signatures must be exact (copied from source)
+- Logic flow in prose, not code blocks
