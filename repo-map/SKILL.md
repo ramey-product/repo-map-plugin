@@ -43,18 +43,45 @@ Then explore. Load `.repo-map/index.md` and `.repo-map/frontier.md`. Read entry 
 
 Track consumed tokens with: `python3 repo-map/scripts/budget.py --budget 150000 --consumed <TOKENS>`
 
-## 3. Warm Start (subsequent explore)
+## 3. Update Mode (drift detection)
+
+Run when command is `update`. Detects and processes only what changed since last session.
+
+```bash
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+python3 repo-map/scripts/drift.py --meta .repo-map/meta.json --root "$REPO_ROOT" --index .repo-map/index.md > /tmp/drift.json
+```
+
+If `summary.no_changes` is true → report "No changes detected since last session" and exit.
+
+If `summary.total_changes > 50` → recommend running `repo-map explore` instead (major refactor detected).
+
+Otherwise, process `actions` array in order:
+
+1. **REMOVE** actions: Delete the stale `details/*.md` file, remove the entry from `index.md`
+2. **RENAME** actions: Rename `details/{old-slug}.md` to `details/{new-slug}.md`, update the path in `index.md`
+3. **REMAP** actions: Re-read the source file → regenerate T2 summary → overwrite `details/{slug}.md` → update `index.md`
+4. **ADD** actions: Add the file to `frontier.md` with high priority (freshness boost)
+
+After processing all actions:
+- Update `meta.json`: set `last_commit` to `current_commit` from drift output, update `coverage` counts, set `last_run`
+- If remaining budget allows, continue with Warm Start exploration (pop frontier entries)
+
+Slug convention for detail files: replace `/`, `.`, and `\` with `-`, collapse multiple hyphens, strip edges, lowercase. Example: `src/utils/helper.py` → `details/src-utils-helper-py.md`.
+
+## 4. Warm Start (subsequent explore)
 
 1. Load `.repo-map/index.md`, `frontier.md`, `meta.json`
-2. Run `git diff $(jq -r .last_commit .repo-map/meta.json)..HEAD --name-only` for drift
-   - Changed files with existing summaries → mark stale, re-prioritize
-   - New files → add to frontier with high freshness score
-   - Deleted files → remove from index
+2. Run drift detection for staleness:
+   ```bash
+   python3 repo-map/scripts/drift.py --meta .repo-map/meta.json --root "$REPO_ROOT" > /tmp/drift.json
+   ```
+   Process any REMOVE/REMAP/ADD actions before exploring (same steps as Update Mode §3)
 3. Pop highest-priority entries from `frontier.md`
 4. For each entry: read file → generate T2 summary → write to `details/` → update `index.md` → add new refs to frontier → check budget
 5. Continue until budget hits Red threshold
 
-## 4. Handoff Protocol
+## 5. Handoff Protocol
 
 When budget reaches Red (>= 80% consumed), **stop exploring immediately** and serialize:
 
@@ -67,7 +94,7 @@ When budget reaches Red (>= 80% consumed), **stop exploring immediately** and se
    > Next session priorities: [top 3 frontier entries].
    > Estimated N sessions remaining for 80% coverage.
 
-## 5. Query Mode
+## 6. Query Mode
 
 When `.repo-map/index.md` exists and no explore/update command was given:
 
@@ -77,7 +104,7 @@ When `.repo-map/index.md` exists and no explore/update command was given:
 4. Only fall through to raw source reads (T4) when T2 detail is insufficient
 5. **Every T4 raw read MUST produce a T2 summary as a side effect** — write it to `details/` and update `index.md`. No read should be wasted.
 
-## 6. Summary Guidelines
+## 7. Summary Guidelines
 
 T2 summaries follow this format:
 - **Purpose**: What this file/module does (1 sentence)
