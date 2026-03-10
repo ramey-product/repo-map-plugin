@@ -1,27 +1,8 @@
 #!/usr/bin/env python3
 """File hasher for repo-map skill.
 
-Computes SHA-256 (truncated to 12 hex chars) for file contents.
-Supports comparison against a previous hash set to detect changes.
-
 Usage:
-    python hash.py [ROOT_DIR]                    # Hash all files
-    python hash.py [ROOT_DIR] --scan SCAN.json   # Hash files from scan output
-    python hash.py [ROOT_DIR] --compare OLD.json # Compare against previous hashes
-
-Output (JSON to stdout):
-    {
-        "root": "/absolute/path",
-        "hashed_at": "ISO-8601 timestamp",
-        "commit": "abc1234" or null,
-        "total_files": 123,
-        "hashes": { "relative/path": "a1b2c3d4e5f6", ... },
-        "changes": {                        # only with --compare
-            "modified": ["path1", ...],
-            "added": ["path2", ...],
-            "deleted": ["path3", ...]
-        }
-    }
+    python hash.py [ROOT_DIR] [--scan SCAN.json] [--compare OLD.json]
 """
 
 from __future__ import annotations
@@ -36,7 +17,7 @@ from pathlib import Path
 
 
 def truncated_sha256(filepath: str) -> str | None:
-    """Compute SHA-256 of file contents, return first 12 hex chars."""
+    """SHA-256 of file contents, truncated to first 12 hex chars."""
     try:
         h = hashlib.sha256()
         with open(filepath, "rb") as f:
@@ -51,7 +32,7 @@ def truncated_sha256(filepath: str) -> str | None:
 
 
 def get_git_commit(root: str) -> str | None:
-    """Get the current git commit hash (short), or None."""
+    """Get current short git commit hash, or None."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -116,8 +97,7 @@ def compute_changes(
 
 
 def discover_files(root: str) -> list[str]:
-    """Walk directory tree to discover hashable files (fallback if no scan)."""
-    # Import ignore logic from scan module if available, else use minimal set
+    """Walk directory tree to discover hashable files (fallback if no --scan)."""
     ignore_dirs = {
         "node_modules", ".git", "__pycache__", ".next", "dist", "build",
         ".cache", "venv", ".venv", ".repo-map", ".claude", "target",
@@ -220,8 +200,8 @@ def main():
         previous = load_previous_hashes(compare_file)
         result["changes"] = compute_changes(hashes, previous)
 
-    json.dump(result, sys.stdout, indent=2)
-    print()  # trailing newline
+    json.dump(result, sys.stdout, separators=(",", ":"))
+    print()
 
 
 if __name__ == "__main__":

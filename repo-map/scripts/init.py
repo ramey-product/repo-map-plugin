@@ -2,18 +2,7 @@
 """Generate initial .repo-map/ directory from scan and frontier data.
 
 Usage:
-    python init.py --scan SCAN.json [--frontier FRONTIER.json] [--root /path/to/repo]
-
-Reads scan.py output (required) and frontier.py output (optional) to produce
-a complete .repo-map/ directory containing:
-  - index.md     -- T1 skeleton with (unmapped) markers
-  - frontier.md  -- prioritized exploration queue
-  - meta.json    -- metadata and configuration
-  - details/     -- directory for T2 detail files
-  - deep/        -- directory for T3 deep-dive files
-  - .gitignore   -- contains '*' to exclude from version control
-
-Outputs JSON summary to stdout. Errors to stderr.
+    python init.py --scan SCAN.json [--frontier FRONTIER.json] [--root DIR]
 """
 from __future__ import annotations
 
@@ -39,7 +28,7 @@ def get_git_commit(root: str) -> str | None:
             capture_output=True,
             text=True,
             cwd=root,
-            timeout=10,
+            timeout=5,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -49,7 +38,7 @@ def get_git_commit(root: str) -> str | None:
 
 
 def detect_repo_name(root: str) -> str:
-    """Derive repo name from the root directory path."""
+    """Derive repo name from root directory path."""
     return Path(root).resolve().name
 
 
@@ -68,11 +57,7 @@ def format_entry_points(entry_points: list[str]) -> str:
 
 
 def build_structure_tree(dirs: list[dict], files: list[dict]) -> str:
-    """Build a compact directory tree from scan data.
-
-    Shows top-level directories with file counts, marking everything
-    as (unmapped) since this is the initial skeleton.
-    """
+    """Build compact directory tree from scan data, marking all as (unmapped)."""
     if not dirs:
         return "(empty repository)\n"
 
@@ -234,59 +219,28 @@ def build_meta_json(scan_data: dict, commit: str | None) -> dict:
     return meta
 
 
+_TECH_EXTS: dict[str, list[str]] = {
+    "python": ["*.py"], "javascript": ["*.js", "*.jsx"], "typescript": ["*.ts", "*.tsx"],
+    "java": ["*.java"], "kotlin": ["*.kt"], "go": ["*.go"], "rust": ["*.rs"],
+    "ruby": ["*.rb"], "php": ["*.php"], "csharp": ["*.cs"], "swift": ["*.swift"],
+    "vue": ["*.vue"], "svelte": ["*.svelte"], "scala": ["*.scala"],
+    "elixir": ["*.ex", "*.exs"], "dart": ["*.dart"], "lua": ["*.lua"],
+    "r": ["*.r", "*.R"], "julia": ["*.jl"], "haskell": ["*.hs"],
+    "clojure": ["*.clj"], "erlang": ["*.erl"], "c": ["*.c", "*.h"],
+    "cpp": ["*.cpp", "*.hpp", "*.cc"],
+}
+
+
 def detect_priority_patterns(tech_stack: list[str]) -> list[str]:
     """Detect file patterns to prioritize based on tech stack."""
-    # Map tech names to their extensions
-    tech_to_ext: dict[str, list[str]] = {
-        "python": ["*.py"],
-        "javascript": ["*.js", "*.jsx"],
-        "typescript": ["*.ts", "*.tsx"],
-        "java": ["*.java"],
-        "kotlin": ["*.kt"],
-        "go": ["*.go"],
-        "rust": ["*.rs"],
-        "ruby": ["*.rb"],
-        "php": ["*.php"],
-        "csharp": ["*.cs"],
-        "swift": ["*.swift"],
-        "vue": ["*.vue"],
-        "svelte": ["*.svelte"],
-        "vb.net": ["*.vb"],
-        "fsharp": ["*.fs"],
-        "scala": ["*.scala"],
-        "elixir": ["*.ex", "*.exs"],
-        "dart": ["*.dart"],
-        "lua": ["*.lua"],
-        "r": ["*.r", "*.R"],
-        "julia": ["*.jl"],
-        "zig": ["*.zig"],
-        "nim": ["*.nim"],
-        "haskell": ["*.hs"],
-        "ocaml": ["*.ml"],
-        "clojure": ["*.clj"],
-        "erlang": ["*.erl"],
-        "c": ["*.c", "*.h"],
-        "cpp": ["*.cpp", "*.hpp", "*.cc"],
-    }
-
-    patterns = []
-    for tech in tech_stack:
-        exts = tech_to_ext.get(tech, [])
-        patterns.extend(exts)
-
+    patterns = [ext for tech in tech_stack for ext in _TECH_EXTS.get(tech, [])]
     return sorted(set(patterns)) if patterns else ["*.py", "*.js", "*.ts"]
 
 
 def write_artifacts(
-    output_dir: Path,
-    index_content: str,
-    frontier_content: str,
-    meta_dict: dict,
+    output_dir: Path, index_content: str, frontier_content: str, meta_dict: dict,
 ) -> dict:
-    """Write all .repo-map/ artifacts to disk.
-
-    Returns a summary dict of what was created.
-    """
+    """Write all .repo-map/ artifacts to disk."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Create subdirectories
@@ -413,7 +367,7 @@ def main() -> None:
         "files_created": result["files_created"],
         "dirs_created": result["dirs_created"],
     }
-    print(json.dumps(summary, indent=2))
+    print(json.dumps(summary, separators=(",", ":")))
 
 
 if __name__ == "__main__":

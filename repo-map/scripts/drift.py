@@ -1,24 +1,8 @@
 #!/usr/bin/env python3
 """Drift detection for repo-map skill.
 
-Detects changes since last mapped commit using git diff (primary)
-or hash comparison (fallback). Outputs a structured change report
-with prioritized actions for the update mode.
-
 Usage:
-    python drift.py --meta .repo-map/meta.json [--root DIR] [--scan SCAN.json] [--index .repo-map/index.md]
-
-Output (JSON to stdout):
-    {
-        "root": "/absolute/path",
-        "detected_at": "ISO-8601",
-        "baseline_commit": "abc1234",
-        "current_commit": "def5678",
-        "changes": { "modified": [...], "added": [...], "deleted": [...], "renamed": [...] },
-        "summary": { "total_changes": N, ... },
-        "stale_details": ["details/path-slug.md", ...],
-        "actions": [{"action": "remove|remap|add_to_frontier|rename", "path": "...", "reason": "..."}, ...]
-    }
+    python drift.py --meta META.json [--root DIR] [--scan SCAN.json] [--index INDEX.md]
 """
 
 from __future__ import annotations
@@ -32,30 +16,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-# ---------------------------------------------------------------------------
-# Slug convention — canonical implementation
-# ---------------------------------------------------------------------------
-
-def derive_detail_slug(file_path: str) -> str:
-    """Convert a relative file path to a detail file slug.
-
-    Example: "src/utils/helper.py" -> "src-utils-helper-py"
-
-    Rules:
-    - Replace '/' and '.' with '-'
-    - Collapse multiple hyphens
-    - Strip leading/trailing hyphens
-    - Lowercase
-    """
-    slug = file_path.replace("/", "-").replace(".", "-").replace("\\", "-")
-    slug = re.sub(r"-+", "-", slug)
-    slug = slug.strip("-").lower()
-    return slug
+def path_to_slug(path: str) -> str:
+    """Convert a file/dir path to a detail file slug."""
+    slug = path.replace("/", "-").replace("\\", "-").replace(".", "-")
+    slug = re.sub(r'-+', '-', slug)
+    return slug.strip("-").lower()
 
 
-# ---------------------------------------------------------------------------
-# Git operations
-# ---------------------------------------------------------------------------
+
 
 def get_current_commit(root: str) -> str | None:
     """Get current HEAD commit hash (short)."""
@@ -73,16 +41,7 @@ def get_current_commit(root: str) -> str | None:
 
 
 def detect_git_changes(root: str, baseline_commit: str) -> dict:
-    """Run git diff between baseline and HEAD, return categorized changes.
-
-    Returns:
-        {
-            "modified": ["path", ...],
-            "added": ["path", ...],
-            "deleted": ["path", ...],
-            "renamed": [{"from": "old", "to": "new"}, ...]
-        }
-    """
+    """Run git diff between baseline and HEAD, return categorized changes."""
     changes: dict[str, list] = {
         "modified": [],
         "added": [],
@@ -156,16 +115,8 @@ def detect_git_changes(root: str, baseline_commit: str) -> dict:
     return changes
 
 
-# ---------------------------------------------------------------------------
-# Hash-based fallback
-# ---------------------------------------------------------------------------
-
 def detect_hash_changes(root: str, meta: dict, scan_file: str | None) -> dict:
-    """Fallback: detect changes by comparing hashes via hash.py.
-
-    Uses the hash table stored in meta.json (if present) and runs
-    hash.py to get current hashes.
-    """
+    """Fallback: detect changes by comparing current vs stored hashes."""
     changes: dict[str, list] = {
         "modified": [],
         "added": [],
@@ -216,17 +167,8 @@ def detect_hash_changes(root: str, meta: dict, scan_file: str | None) -> dict:
     return changes
 
 
-# ---------------------------------------------------------------------------
-# Index parsing
-# ---------------------------------------------------------------------------
-
 def load_mapped_files(index_path: str) -> set[str]:
-    """Parse index.md to extract currently-mapped file paths.
-
-    Looks for lines that appear to reference files with extensions,
-    formatted as tree entries like: `  - path/to/file.py — description`
-    or `| path/to/file.py |`.
-    """
+    """Parse index.md to extract currently-mapped file paths."""
     mapped = set()
     if not os.path.isfile(index_path):
         return mapped
@@ -248,21 +190,10 @@ def load_mapped_files(index_path: str) -> set[str]:
     return mapped
 
 
-# ---------------------------------------------------------------------------
-# Action mapping
-# ---------------------------------------------------------------------------
-
 def map_changes_to_actions(
-    changes: dict,
-    existing_details_dir: str | None,
+    changes: dict, existing_details_dir: str | None,
 ) -> tuple[list[dict], list[str]]:
-    """Cross-reference changes with existing map state.
-
-    Returns:
-        (actions, stale_details)
-        - actions: prioritized list of {action, path, reason}
-        - stale_details: list of detail file paths that need regeneration
-    """
+    """Cross-reference changes with existing detail files, return (actions, stale_details)."""
     actions = []
     stale_details = []
 
@@ -280,7 +211,7 @@ def map_changes_to_actions(
             "path": path,
             "reason": "deleted",
         })
-        slug = derive_detail_slug(path)
+        slug = path_to_slug(path)
         if slug in existing_slugs:
             stale_details.append(f"details/{slug}.md")
 
@@ -292,13 +223,13 @@ def map_changes_to_actions(
             "from_path": rename["from"],
             "reason": "renamed",
         })
-        old_slug = derive_detail_slug(rename["from"])
+        old_slug = path_to_slug(rename["from"])
         if old_slug in existing_slugs:
             stale_details.append(f"details/{old_slug}.md")
 
     # 3. Remaps (modified files with existing summaries)
     for path in changes.get("modified", []):
-        slug = derive_detail_slug(path)
+        slug = path_to_slug(path)
         has_detail = slug in existing_slugs
         actions.append({
             "action": "remap",
@@ -318,10 +249,6 @@ def map_changes_to_actions(
 
     return actions, stale_details
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
@@ -391,25 +318,6 @@ def main():
 
     if use_git:
         changes = detect_git_changes(str(root_path), baseline_commit)
-    elif baseline_commit is None:
-        # Never mapped before — all files are new
-        # Run scan to discover files, or use hash.py fallback
-        changes = detect_hash_changes(str(root_path), meta, scan_file)
-        if not changes["added"] and not changes["modified"]:
-            # If hash fallback also returned nothing, discover files
-            from pathlib import Path as P
-            hash_script = os.path.join(os.path.dirname(__file__), "hash.py")
-            if os.path.isfile(hash_script):
-                try:
-                    result = subprocess.run(
-                        [sys.executable, hash_script, str(root_path)],
-                        capture_output=True, text=True, timeout=60,
-                    )
-                    if result.returncode == 0:
-                        data = json.loads(result.stdout)
-                        changes["added"] = sorted(data.get("hashes", {}).keys())
-                except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
-                    pass
     else:
         changes = detect_hash_changes(str(root_path), meta, scan_file)
 
@@ -448,8 +356,8 @@ def main():
         "actions": actions,
     }
 
-    json.dump(output, sys.stdout, indent=2)
-    print()  # trailing newline
+    json.dump(output, sys.stdout, separators=(",", ":"))
+    print()
 
 
 if __name__ == "__main__":
