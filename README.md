@@ -1,4 +1,7 @@
-# Repo-Map Plugin
+# repo-map
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
 
 A Claude Code skill that builds persistent, token-efficient repository maps across sessions. Instead of re-reading source files every conversation, the plugin maintains a tiered map that grows incrementally — giving the agent structural understanding of your entire codebase at a fraction of the token cost.
 
@@ -8,7 +11,42 @@ Every time an AI agent starts a new session on a large codebase, it has to re-re
 
 ## The Solution
 
-Repo-Map builds a layered, persistent index that lives in your working directory (`.repo-map/`). The agent loads a compact structural map (~10K tokens) instead of raw source, pulling deeper detail only when needed. The map persists across sessions — no re-reading, no wasted tokens.
+Repo-map builds a layered, persistent index that lives in your working directory (`.repo-map/`). The agent loads a compact structural map (~10K tokens) instead of raw source, pulling deeper detail only when needed. The map persists across sessions — no re-reading, no wasted tokens.
+
+## Features
+
+- **Tiered summaries** — T1 (compact index), T2 (file summaries), T3 (deep-dives), T4 (raw source). Claude reads the cheapest tier that answers the question.
+- **Frontier-based exploration** — Prioritizes high-centrality files first. Entry points and heavily-imported modules get mapped before leaf files.
+- **Drift detection** — On update, diffs against the last mapped commit. Only re-maps changed files.
+- **Index compression** — When the index grows too large, automatically compresses low-value entries while preserving hot paths from query history.
+- **Budget-aware** — Tracks token consumption with green/yellow/red zones. Stops exploring before exhausting the context window.
+- **Zero dependencies** — Pure Python 3.9+ stdlib. No pip install required.
+
+## Requirements
+
+- Python 3.9+
+- Git
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (the skill runs inside Claude Code sessions)
+
+## Installation
+
+1. Clone this repository into your Claude Code skills directory:
+
+   ```bash
+   cd ~/.claude/skills  # or wherever you keep skills
+   git clone https://github.com/ramey-product/repo-map-plugin.git repo-map-plugin
+   ```
+
+2. The `repo-map/SKILL.md` file is the skill definition. Claude Code will discover it automatically when placed in the skills directory.
+
+3. Navigate to any Git repository and use the skill:
+
+   ```
+   /explore    # Build or extend the repository map
+   /update     # Detect drift and re-map changed files only
+   ```
+
+   Or just ask questions — if a `.repo-map/` directory exists, Claude uses it automatically for context (Query mode).
 
 ## How It Works
 
@@ -27,9 +65,9 @@ Every raw source read permanently enriches the map. No token is spent without bu
 
 | Mode | Trigger | What Happens |
 |------|---------|--------------|
-| **Cold Start** | First run / `repo-map explore` | Scan repo, build initial index + frontier, begin exploration |
-| **Warm Start** | `repo-map explore` (map exists) | Load existing map, detect drift, continue exploring from frontier |
-| **Update** | `repo-map update` | Detect changes via `git diff`, remap only modified files |
+| **Cold Start** | First run (no `.repo-map/`) | Scan repo, build initial index + frontier, begin exploration |
+| **Warm Start** | `/explore` (map exists) | Load existing map, detect drift, continue exploring from frontier |
+| **Update** | `/update` | Detect changes via `git diff`, remap only modified files |
 | **Query** | Automatic (map exists) | Answer questions using tiered map — load T2/T3 as needed |
 
 ### Pipeline
@@ -37,25 +75,40 @@ Every raw source read permanently enriches the map. No token is spent without bu
 Eight standalone scripts chained via JSON:
 
 ```
-scan.py → hash.py → frontier.py → budget.py → init.py → drift.py → compress.py → enrich.py
+scan.py → frontier.py → init.py     (Cold Start)
+drift.py                             (Update / staleness check)
+budget.py                            (Token tracking)
+compress.py                          (Index compression)
+enrich.py                            (T3 deep-dive generation)
+hash.py                              (File hashing utilities)
 ```
 
-- **scan.py** — Walk the repo, classify files, detect tech stack
-- **hash.py** — Content hashing for change detection
-- **frontier.py** — Priority queue scoring (centrality, relevance, freshness, coverage gaps)
-- **budget.py** — Token budget tracking with zone-based throttling
-- **init.py** — Bootstrap `.repo-map/` with index, frontier, and metadata
-- **drift.py** — Detect repo changes since last session via git or hash comparison
-- **compress.py** — Hierarchical collapse, depth limiting, sibling merging when index exceeds 20K tokens
-- **enrich.py** — T3 deep-dive generation for high-value files with cross-reference analysis
+Each script reads JSON from stdin or files and writes JSON to stdout. They're composable via pipes and designed to be invoked by the SKILL.md orchestration logic.
 
-All scripts are Python 3.9+ stdlib-only — no pip dependencies.
+### Generated Artifacts
+
+When repo-map runs, it creates a `.repo-map/` directory in the repository root:
+
+```
+.repo-map/
+├── index.md          # T1: Compact structural index (~10-25K tokens)
+├── frontier.md       # Exploration queue, prioritized by centrality
+├── meta.json         # Session metadata, coverage stats, config
+├── queries.json      # Query history for hot-path preservation
+├── details/          # T2: Per-file summaries (200-800 tokens each)
+│   ├── src-auth-login-py.md
+│   ├── src-api-routes-py.md
+│   └── ...
+└── deep/             # T3: Deep-dive analysis (500-2000 tokens each)
+    ├── src-auth-login-py.md
+    └── ...
+```
+
+Add `.repo-map/` to your project's `.gitignore` — it's generated output, not source.
 
 ## Benchmark Results
 
 Measured with `bench.py` across 5 synthetic repo sizes, comparing naive (reload all source every session) vs plugin (tiered persistent map). Default: 5 queries per session.
-
-### Summary
 
 | Repo Size | Files | Naive/Session | Plugin Warm | Break-even | 5-Session Savings |
 |-----------|-------|---------------|-------------|------------|-------------------|
@@ -125,12 +178,13 @@ repo-map/
     └── meta-template.json      # Session metadata template
 ```
 
-## Installation
+## Architecture
 
-Copy the `repo-map/` directory into your project's `.claude/skills/` folder (or wherever your Claude Code skills are configured). The SKILL.md file registers the `explore` and `update` commands automatically.
+For detailed technical documentation, see:
 
-## Requirements
+- [Deployment Specification](repo-map-deployment-spec.md) — Operational model, budget partitioning, tier definitions
+- [Agentic Search Architecture](agentic-search-architecture.md) — Algorithmic foundations, search strategies
 
-- Python 3.9+
-- Git (for drift detection)
-- No external dependencies
+## License
+
+[MIT](LICENSE)
