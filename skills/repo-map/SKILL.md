@@ -1,18 +1,13 @@
 ---
 name: repo-map
-description: Build and query a persistent, token-efficient repository map across sessions.
-commands:
-  - name: explore
-    description: Build or extend the repository map. Consumes full token budget.
-  - name: update
-    description: Detect drift via git diff. Re-explore only changed/new files.
+description: "Build and query a persistent, token-efficient repository map across sessions. Use this skill when the user says 'explore the repo', 'map this codebase', 'update the repo map', 'what does this file do', or asks structural questions about a repository. Also trigger when a .repo-map/ directory exists and the user asks about code architecture, file relationships, or module purposes."
 ---
 
 # Repo Map
 
 Persistent repository map that builds across sessions and answers structural questions cheaply.
 
-All scripts in `repo-map/scripts/`. Set `R=$(git rev-parse --show-toplevel)` before running.
+All scripts in `${CLAUDE_PLUGIN_ROOT}/skills/repo-map/scripts/`. Set `R=$(git rev-parse --show-toplevel)` before running.
 
 ## 1. Mode Detection
 
