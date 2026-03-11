@@ -1,0 +1,9 @@
+{
+  "name": "repo-map",
+  "version": "0.1.0",
+  "description": "Build and query persistent, token-efficient repository maps across sessions. Tiered summaries reduce codebase context from hundreds of thousands of tokens to ~10K.",
+  "author": {
+    "name": "Matt Ramey"
+  },
+  "keywords": ["repo-map", "codebase", "context", "tokens", "mapping", "exploration"]
+}

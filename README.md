@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-green.svg)](https://www.python.org/)
 
-A Claude Code skill that builds persistent, token-efficient repository maps across sessions. Instead of re-reading source files every conversation, the plugin maintains a tiered map that grows incrementally — giving the agent structural understanding of your entire codebase at a fraction of the token cost.
+A Claude Code / Cowork plugin that builds persistent, token-efficient repository maps across sessions. Instead of re-reading source files every conversation, the plugin maintains a tiered map that grows incrementally — giving the agent structural understanding of your entire codebase at a fraction of the token cost.
 
 ## The Problem
 
@@ -30,16 +30,20 @@ Repo-map builds a layered, persistent index that lives in your working directory
 
 ## Installation
 
-1. Clone this repository into your Claude Code skills directory:
+### Option A: Install as a plugin (Cowork / Claude Code)
 
-   ```bash
-   cd ~/.claude/skills  # or wherever you keep skills
-   git clone https://github.com/ramey-product/repo-map-plugin.git repo-map-plugin
-   ```
+Download the `.plugin` file from the [latest release](https://github.com/ramey-product/repo-map-plugin/releases) and install it via the plugin manager.
 
-2. The `repo-map/SKILL.md` file is the skill definition. Claude Code will discover it automatically when placed in the skills directory.
+### Option B: Clone into your skills directory (Claude Code)
 
-3. Navigate to any Git repository and use the skill:
+```bash
+cd ~/.claude/skills
+git clone https://github.com/ramey-product/repo-map-plugin.git repo-map-plugin
+```
+
+### Usage
+
+Navigate to any Git repository and use the commands:
 
    ```
    /explore    # Build or extend the repository map
